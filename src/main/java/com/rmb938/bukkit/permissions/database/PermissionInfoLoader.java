@@ -8,7 +8,6 @@ import com.rmb938.bukkit.permissions.entity.Group;
 import com.rmb938.bukkit.permissions.entity.Permission;
 import com.rmb938.bukkit.permissions.entity.info.PermissionInfo;
 import com.rmb938.database.DatabaseAPI;
-import org.bukkit.Bukkit;
 import org.bukkit.entity.Player;
 import org.bukkit.permissions.PermissionAttachment;
 
@@ -53,7 +52,7 @@ public class PermissionInfoLoader extends UserInfoLoader<PermissionInfo> {
         }
     }
 
-    private void loadGroup(String groupName) {
+    public void loadGroup(String groupName) {
         DBObject dbObject = DatabaseAPI.getMongoDatabase().findOne("mn2_permissions_groups", new BasicDBObject("groupName", groupName));
         if (dbObject == null) {
             plugin.getLogger().warning("Unknown Group "+groupName);
@@ -74,7 +73,9 @@ public class PermissionInfoLoader extends UserInfoLoader<PermissionInfo> {
                 if (Group.getGroups().containsKey(groupName1)) {
                     group.getInheritance().add(Group.getGroups().get(groupName1));
                 } else {
-                    plugin.getLogger().warning("Unknown group adding to group " + groupName);
+                    plugin.getLogger().warning("Unknown group adding to group " + groupName+" removing");
+                    DatabaseAPI.getMongoDatabase().updateDocument("mn2_permission_groups", new BasicDBObject("groupName", group.getGroupName()),
+                            new BasicDBObject("$pull", new BasicDBObject("inheritance", groupName)));
                 }
             }
         }
@@ -101,59 +102,6 @@ public class PermissionInfoLoader extends UserInfoLoader<PermissionInfo> {
         DatabaseAPI.getMongoDatabase().insert("mn2_permissions_groups", groupObject);
 
         loadGroup(groupName);
-    }
-
-    public void addGroupPermission(Group group, Permission permission) {
-        DatabaseAPI.getMongoDatabase().updateDocument("mn2_permissions_groups", new BasicDBObject("groupName", group.getGroupName()),
-                new BasicDBObject("$push", new BasicDBObject("permissions", new BasicDBObject("permission", permission.getPermission()).append("serverType", permission.getServerType()))));
-        loadGroups();
-    }
-
-    public void removeGroupPermission(Group group, Permission permission) {
-        DatabaseAPI.getMongoDatabase().updateDocument("mn2_permission_groups", new BasicDBObject("groupName", group.getGroupName()),
-                new BasicDBObject("$pull", new BasicDBObject("permissions", new BasicDBObject("permission", permission.getPermission()).append("serverType", permission.getServerType()))));
-        loadGroups();
-    }
-
-    public void removeGroup(Group group) {
-        DatabaseAPI.getMongoDatabase().remove("mn2_permissions_groups", new BasicDBObject("groupName", group.getGroupName()));
-        loadGroups();
-    }
-
-    public void addGroupParent(Group group, Group parent) {
-        DatabaseAPI.getMongoDatabase().updateDocument("mn2_permission_groups", new BasicDBObject("groupName", group.getGroupName()),
-                new BasicDBObject("$push", new BasicDBObject("inheritance", parent.getGroupName())));
-        loadGroups();
-    }
-
-    public void removeGroupParent(Group group, Group parent) {
-        DatabaseAPI.getMongoDatabase().updateDocument("mn2_permission_groups", new BasicDBObject("groupName", group.getGroupName()),
-                new BasicDBObject("$pull", new BasicDBObject("inheritance", parent.getGroupName())));
-        loadGroups();
-    }
-
-    public void userAddGroup(User user, Group group) {
-        DatabaseAPI.getMongoDatabase().updateDocument("mn2_users", new BasicDBObject("userUUID", user.getUserUUID()),
-                new BasicDBObject("$push", new BasicDBObject("groups", group.getGroupName())));
-        loadUserInfo(user, Bukkit.getPlayer(user.getUserUUID()));
-    }
-
-    public void userRemoveGroup(User user, Group group) {
-        DatabaseAPI.getMongoDatabase().updateDocument("mn2_users", new BasicDBObject("userUUID", user.getUserUUID()),
-                new BasicDBObject("$pull", new BasicDBObject("groups", group.getGroupName())));
-        loadUserInfo(user, Bukkit.getPlayer(user.getUserUUID()));
-    }
-
-    public void userAddPermission(User user, Permission permission) {
-        DatabaseAPI.getMongoDatabase().updateDocument("mn2_users", new BasicDBObject("userUUID", user.getUserUUID()),
-                new BasicDBObject("$push", new BasicDBObject("permissions", new BasicDBObject("permission", permission.getPermission()).append("serverType", permission.getServerType()))));
-        loadUserInfo(user, Bukkit.getPlayer(user.getUserUUID()));
-    }
-
-    public void userRemovePermission(User user, Permission permission) {
-        DatabaseAPI.getMongoDatabase().updateDocument("mn2_users", new BasicDBObject("userUUID", user.getUserUUID()),
-                new BasicDBObject("$pull", new BasicDBObject("permissions", new BasicDBObject("permission", permission.getPermission()).append("serverType", permission.getServerType()))));
-        loadUserInfo(user, Bukkit.getPlayer(user.getUserUUID()));
     }
 
     private void addInheritance(Group group, PermissionAttachment permissionAttachment) {
@@ -201,7 +149,9 @@ public class PermissionInfoLoader extends UserInfoLoader<PermissionInfo> {
             if (Group.getGroups().containsKey(groupName)) {
                 permissionInfo.getGroups().add(Group.getGroups().get(groupName));
             } else {
-                plugin.getLogger().warning("Unknown group adding to user "+groupName);
+                plugin.getLogger().warning("Unknown group adding to user "+groupName+" removing.");
+                DatabaseAPI.getMongoDatabase().updateDocument("mn2_users", new BasicDBObject("userUUID", user.getUserUUID()),
+                        new BasicDBObject("$pull", new BasicDBObject("groups", groupName)));
             }
         }
 
@@ -232,6 +182,7 @@ public class PermissionInfoLoader extends UserInfoLoader<PermissionInfo> {
             Permission permission = new Permission();
             permission.setPermission(permissionString);
             permission.setServerType(serverType);
+            permissionInfo.getPermissions().add(permission);
         }
 
         for (Permission permission : permissionInfo.getPermissions()) {

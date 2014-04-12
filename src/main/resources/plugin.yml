@@ -2,4 +2,4 @@ name: ${project.name}
 version: ${project.version}
 author: rmb938
 main: ${project.groupId}.${project.artifactId}
-depend: [MN2BukkitBase]
+depend: [MN2BukkitBase, Yamler-Bukkit]
