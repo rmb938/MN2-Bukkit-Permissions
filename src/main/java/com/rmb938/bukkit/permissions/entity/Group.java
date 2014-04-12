@@ -11,7 +11,6 @@ public class Group {
         return groups;
     }
 
-    private int groupId;
     private String groupName;
     private int weight;
     private ArrayList<Group> inheritance = new ArrayList<>();
@@ -23,14 +22,6 @@ public class Group {
 
     public ArrayList<Permission> getPermissions() {
         return permissions;
-    }
-
-    public int getGroupId() {
-        return groupId;
-    }
-
-    public void setGroupId(int groupId) {
-        this.groupId = groupId;
     }
 
     public String getGroupName() {

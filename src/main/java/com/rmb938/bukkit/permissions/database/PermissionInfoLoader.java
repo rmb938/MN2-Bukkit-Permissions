@@ -1,121 +1,241 @@
 package com.rmb938.bukkit.permissions.database;
 
+import com.mongodb.BasicDBList;
+import com.mongodb.BasicDBObject;
+import com.mongodb.DBCursor;
+import com.mongodb.DBObject;
 import com.rmb938.bukkit.base.database.UserInfoLoader;
 import com.rmb938.bukkit.base.entity.User;
+import com.rmb938.bukkit.permissions.MN2BukkitPermissions;
 import com.rmb938.bukkit.permissions.entity.Group;
 import com.rmb938.bukkit.permissions.entity.Permission;
 import com.rmb938.bukkit.permissions.entity.info.PermissionInfo;
 import com.rmb938.database.DatabaseAPI;
-import org.apache.commons.dbutils.handlers.BeanListHandler;
-import org.apache.commons.dbutils.handlers.MapListHandler;
 import org.bukkit.Bukkit;
 import org.bukkit.entity.Player;
 import org.bukkit.permissions.PermissionAttachment;
 
-import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
-import java.util.Map;
 
 public class PermissionInfoLoader extends UserInfoLoader<PermissionInfo> {
 
-    public PermissionInfoLoader() {
+    private final MN2BukkitPermissions plugin;
+
+    public PermissionInfoLoader(MN2BukkitPermissions plugin) {
         super(PermissionInfo.class);
+        this.plugin = plugin;
         loadGroups();
     }
 
     @Override
     public void createTable() {
-
+        if (DatabaseAPI.getMongoDatabase().collectionExists("mn2_permissions_groups") == false) {
+            DatabaseAPI.getMongoDatabase().createCollection("mn2_permissions_groups");
+        }
     }
 
-    private void loadGroups() {
-        ArrayList<Object> objects = DatabaseAPI.getMySQLDatabase().getBeansInfo("select groupName from `mn2_permission_groups`", new MapListHandler());
-        for (Object obj : objects) {
-            Map map = (Map) obj;
-            String groupName = (String) map.get("groupName");
+    public void loadGroups() {
+        Group.getGroups().clear();
+        DBCursor cursor = DatabaseAPI.getMongoDatabase().findMany("mn2_permissions_groups");
+
+        while (cursor.hasNext()) {
+            DBObject dbObject = cursor.next();
+            String groupName = (String) dbObject.get("groupName");
             loadGroup(groupName);
+        }
+        cursor.close();
+        if (Group.getGroups().containsKey(plugin.getMainConfig().defaultGroup) == false) {
+            createGroup(plugin.getMainConfig().defaultGroup, 0);
         }
     }
 
     private void loadGroup(String groupName) {
-        ArrayList<Object> objects = DatabaseAPI.getMySQLDatabase().getBeansInfo("select groupId, groupName, weight from `mn2_permission_groups` where groupName='" + groupName + "'", new BeanListHandler<>(Group.class));
-        for (Object obj : objects) {
-            Group group = (Group) obj;
+        DBObject dbObject = DatabaseAPI.getMongoDatabase().findOne("mn2_permissions_groups", new BasicDBObject("groupName", groupName));
+        if (dbObject == null) {
+            plugin.getLogger().warning("Unknown Group "+groupName);
+            return;
+        }
+        int weight = (Integer) dbObject.get("weight");
+        Group group = new Group();
+        group.setGroupName(groupName);
+        group.setWeight(weight);
 
-            ArrayList<Object> objects1 = DatabaseAPI.getMySQLDatabase().getBeansInfo("select groupName from `mn2_permission_members` join `mn2_permission_entities` ON memberOf = mn2_permission_entities.entityId join `mn2_permission_groups` ON mn2_permission_entities.entityLink = groupId where mn2_permission_members.entityId= (select entityId from `mn2_permission_entities` join `mn2_permission_groups` ON entityLink = groupId where groupName='" + group.getGroupName() + "')", new MapListHandler());
-            for (Object obj1 : objects1) {
-                Map map = (Map) obj1;
-                String groupName1 = (String) map.get("groupName");
-                if (Group.getGroups().containsKey(groupName1) == false) {
-                    loadGroup(groupName1);
-                } else {
+        BasicDBList inheritance = (BasicDBList) dbObject.get("inheritance");
+        while (inheritance.iterator().hasNext()) {
+            String groupName1 = (String) inheritance.iterator().next();
+            if (Group.getGroups().containsKey(groupName1)) {
+                group.getInheritance().add(Group.getGroups().get(groupName1));
+            } else {
+                loadGroup(groupName1);
+                if (Group.getGroups().containsKey(groupName1)) {
                     group.getInheritance().add(Group.getGroups().get(groupName1));
+                } else {
+                    plugin.getLogger().warning("Unknown group adding to group " + groupName);
                 }
             }
+        }
 
-            objects1 = DatabaseAPI.getMySQLDatabase().getBeansInfo("select permission, serverType from `mn2_permission_entries` where entityId = (select entityId from `mn2_permission_entities` join `mn2_permission_groups` ON entityLink = groupId where groupName='" + group.getGroupName() + "')", new BeanListHandler<>(Permission.class));
-            for (Object obj1 : objects1) {
-                Permission permission = (Permission) obj1;
-                group.getPermissions().add(permission);
+        BasicDBList permissions = (BasicDBList) dbObject.get("permissions");
+        while (permissions.iterator().hasNext()) {
+            BasicDBObject dbObject1 = (BasicDBObject) permissions.iterator().next();
+            String permissionString = (String) dbObject1.get("permission");
+            String serverType = (String) dbObject1.get("serverType");
+            Permission permission = new Permission();
+            permission.setPermission(permissionString);
+            permission.setServerType(serverType);
+            group.getPermissions().add(permission);
+        }
+        Group.getGroups().put(groupName, group);
+    }
+
+    public void createGroup(String groupName, int weight) {
+        BasicDBObject groupObject = new BasicDBObject("groupName", groupName);
+        groupObject.append("weight", weight);
+        groupObject.append("inheritance", new BasicDBList());
+        groupObject.append("permissions", new BasicDBList());
+
+        DatabaseAPI.getMongoDatabase().insert("mn2_permissions_groups", groupObject);
+
+        loadGroup(groupName);
+    }
+
+    public void addGroupPermission(Group group, Permission permission) {
+        DatabaseAPI.getMongoDatabase().updateDocument("mn2_permissions_groups", new BasicDBObject("groupName", group.getGroupName()),
+                new BasicDBObject("$push", new BasicDBObject("permissions", new BasicDBObject("permission", permission.getPermission()).append("serverType", permission.getServerType()))));
+        loadGroups();
+    }
+
+    public void removeGroupPermission(Group group, Permission permission) {
+        DatabaseAPI.getMongoDatabase().updateDocument("mn2_permission_groups", new BasicDBObject("groupName", group.getGroupName()),
+                new BasicDBObject("$pull", new BasicDBObject("permissions", new BasicDBObject("permission", permission.getPermission()).append("serverType", permission.getServerType()))));
+        loadGroups();
+    }
+
+    public void removeGroup(Group group) {
+        DatabaseAPI.getMongoDatabase().remove("mn2_permissions_groups", new BasicDBObject("groupName", group.getGroupName()));
+        loadGroups();
+    }
+
+    public void addGroupParent(Group group, Group parent) {
+        DatabaseAPI.getMongoDatabase().updateDocument("mn2_permission_groups", new BasicDBObject("groupName", group.getGroupName()),
+                new BasicDBObject("$push", new BasicDBObject("inheritance", parent.getGroupName())));
+        loadGroups();
+    }
+
+    public void removeGroupParent(Group group, Group parent) {
+        DatabaseAPI.getMongoDatabase().updateDocument("mn2_permission_groups", new BasicDBObject("groupName", group.getGroupName()),
+                new BasicDBObject("$pull", new BasicDBObject("inheritance", parent.getGroupName())));
+        loadGroups();
+    }
+
+    public void userAddGroup(User user, Group group) {
+        DatabaseAPI.getMongoDatabase().updateDocument("mn2_users", new BasicDBObject("userUUID", user.getUserUUID()),
+                new BasicDBObject("$push", new BasicDBObject("groups", group.getGroupName())));
+        loadUserInfo(user, Bukkit.getPlayer(user.getUserUUID()));
+    }
+
+    public void userRemoveGroup(User user, Group group) {
+        DatabaseAPI.getMongoDatabase().updateDocument("mn2_users", new BasicDBObject("userUUID", user.getUserUUID()),
+                new BasicDBObject("$pull", new BasicDBObject("groups", group.getGroupName())));
+        loadUserInfo(user, Bukkit.getPlayer(user.getUserUUID()));
+    }
+
+    public void userAddPermission(User user, Permission permission) {
+        DatabaseAPI.getMongoDatabase().updateDocument("mn2_users", new BasicDBObject("userUUID", user.getUserUUID()),
+                new BasicDBObject("$push", new BasicDBObject("permissions", new BasicDBObject("permission", permission.getPermission()).append("serverType", permission.getServerType()))));
+        loadUserInfo(user, Bukkit.getPlayer(user.getUserUUID()));
+    }
+
+    public void userRemovePermission(User user, Permission permission) {
+        DatabaseAPI.getMongoDatabase().updateDocument("mn2_users", new BasicDBObject("userUUID", user.getUserUUID()),
+                new BasicDBObject("$pull", new BasicDBObject("permissions", new BasicDBObject("permission", permission.getPermission()).append("serverType", permission.getServerType()))));
+        loadUserInfo(user, Bukkit.getPlayer(user.getUserUUID()));
+    }
+
+    private void addInheritance(Group group, PermissionAttachment permissionAttachment) {
+        for (Group group1 : group.getInheritance()) {
+            addInheritance(group1, permissionAttachment);
+        }
+        for (Permission permission : group.getPermissions()) {
+            if (permission.getServerType().equals("bungee")) {
+                continue;
             }
-
-            Group.getGroups().put(group.getGroupName(), group);
+            if (permission.getServerType().equals("global") == false) {
+                if (permission.getServerType().equals(plugin.getServer().getServerName().split("\\.")[0]) == false) {
+                    continue;
+                }
+            }
+            if (permission.getPermission().startsWith("-")) {
+                permissionAttachment.setPermission(permission.getPermission().substring(1, permission.getPermission().length()), false);
+            } else {
+                permissionAttachment.setPermission(permission.getPermission(), true);
+            }
         }
     }
 
     @Override
-    public PermissionInfo loadUserInfo(User user) {
-        Player player = Bukkit.getPlayer(user.getUserUUID());
-        Bukkit.getLogger().info("Adding Permission Info to user " + player.getName());
-        PermissionAttachment permissionAttachment = player.addAttachment(Bukkit.getPluginManager().getPlugin("MN2BukkitPermissions"));
+    public PermissionInfo loadUserInfo(User user, Player player) {
+        if (player == null) {
+            return null;
+        }
+        DBObject userObject = DatabaseAPI.getMongoDatabase().findOne("mn2_users", new BasicDBObject("userUUID", user.getUserUUID()));
+        if (userObject == null) {
+            plugin.getLogger().warning("Unknown user permission info "+player.getName());
+            return null;
+        }
+        PermissionAttachment permissionAttachment = player.addAttachment(plugin);
         PermissionInfo permissionInfo = new PermissionInfo(permissionAttachment);
 
-        ArrayList<Object> objects = DatabaseAPI.getMySQLDatabase().getBeansInfo("select groupName from `mn2_permission_memberships` join `mn2_permission_entities` on memberOf = mn2_permission_entities.entityId join `mn2_permission_groups` on entityLink = groupId where mn2_permission_memberships.entityId = (select entityId from `mn2_permission_entities` join `mn2_users` ON entityLink = userUUID where userUUID='" + user.getUserUUID() + "')", new MapListHandler());
-        for (Object obj : objects) {
-            Map map = (Map) obj;
-            String groupName = (String) map.get("groupName");
-            Group group = Group.getGroups().get(groupName);
-            permissionInfo.getGroups().add(group);
+        if (userObject.containsField("groups") == false) {
+            return null;
+        }
+
+        BasicDBList groupsList = (BasicDBList) userObject.get("groups");
+
+        while (groupsList.iterator().hasNext()) {
+            String groupName = (String) groupsList.iterator().next();
+            if (Group.getGroups().containsKey(groupName)) {
+                permissionInfo.getGroups().add(Group.getGroups().get(groupName));
+            } else {
+                plugin.getLogger().warning("Unknown group adding to user "+groupName);
+            }
         }
 
         Collections.sort(permissionInfo.getGroups(), new Comparator<Group>() {
             @Override
             public int compare(Group o1, Group o2) {
                 if (o1.getWeight() > o2.getWeight()) {
-                    return -1;
-                }
-                if (o1.getWeight() < o2.getWeight()) {
                     return 1;
                 }
-                return  0;
+                if (o1.getWeight() < o2.getWeight()) {
+                    return -1;
+                }
+                return 0;
             }
         });
 
-        for (Group group : permissionInfo.getGroups()) {
-            for (Group group1 : group.getInheritance()) {
-                for (Permission permission : group1.getPermissions()) {
-                    if (permission.getPermission().startsWith("-")) {
-                        permissionAttachment.setPermission(permission.getPermission().substring(1, permission.getPermission().length()), false);
-                    } else {
-                        permissionAttachment.setPermission(permission.getPermission(), true);
-                    }
-                }
-            }
-            for (Permission permission : group.getPermissions()) {
-                if (permission.getPermission().startsWith("-")) {
-                    permissionAttachment.setPermission(permission.getPermission().substring(1, permission.getPermission().length()), false);
-                } else {
-                    permissionAttachment.setPermission(permission.getPermission(), true);
-                }
-            }
+        addInheritance(permissionInfo.getGroups().get(0), permissionAttachment);
+
+        BasicDBList permissionsList = (BasicDBList) userObject.get("permissions");
+        while (permissionsList.iterator().hasNext()) {
+            DBObject permissionObject = (DBObject) permissionsList.iterator().next();
+            String permissionString = (String) permissionObject.get("permission");
+            String serverType = (String) permissionObject.get("serverType");
+            Permission permission = new Permission();
+            permission.setPermission(permissionString);
+            permission.setServerType(serverType);
         }
 
-        objects = DatabaseAPI.getMySQLDatabase().getBeansInfo("select permission, serverType from `mn2_permission_entries` join `mn2_permission_entities` using(entityId) where entityLink='"+user.getUserUUID()+"'", new BeanListHandler<>(Permission.class));
-        for (Object obj : objects) {
-            Permission permission = (Permission) obj;
-            permissionInfo.getPermissions().add(permission);
-
+        for (Permission permission : permissionInfo.getPermissions()) {
+            if (permission.getServerType().equalsIgnoreCase("bungee")) {
+                continue;
+            }
+            if (permission.getServerType().equalsIgnoreCase("global") == false) {
+                if (permission.getServerType().equalsIgnoreCase(plugin.getServer().getServerName().split("\\.")[0]) == false) {
+                    continue;
+                }
+            }
             if (permission.getPermission().startsWith("-")) {
                 permissionAttachment.setPermission(permission.getPermission().substring(1, permission.getPermission().length()), false);
             } else {
@@ -123,28 +243,24 @@ public class PermissionInfoLoader extends UserInfoLoader<PermissionInfo> {
             }
         }
 
-        user.getUserInfo().put(permissionInfo.getClass(), permissionInfo);
+        user.getUserInfo().put(PermissionInfo.class, permissionInfo);
         return permissionInfo;
     }
 
     @Override
-    public void createUserInfo(User user) {
-        Player player = Bukkit.getPlayer(user.getUserUUID());
-        Bukkit.getLogger().info("Creating Permission Info for user "+player.getName());
-        DatabaseAPI.getMySQLDatabase().updateQueryPS("INSERT INTO `mn2_permission_entities` (entityId, type, entityLink) VALUES (NULL, ?, ?)", "user", user.getUserUUID());
+    public void createUserInfo(User user, Player player) {
+        if (player == null) {
+            return;
+        }
+
+        DatabaseAPI.getMongoDatabase().updateDocument("mn2_users", new BasicDBObject("userUUID", user.getUserUUID()),
+                new BasicDBObject("$set", new BasicDBObject("groups", new BasicDBList())));
+        DatabaseAPI.getMongoDatabase().updateDocument("mn2_users", new BasicDBObject("userUUID", user.getUserUUID()),
+                new BasicDBObject("$set", new BasicDBObject("permissions", new BasicDBList())));
     }
 
     @Override
-    public void saveUserInfo(User user) {
+    public void saveUserInfo(User user, Player player) {
 
-    }
-
-    @Override
-    public void createTempUserInfo(User user) {
-        Player player = Bukkit.getPlayer(user.getUserUUID());
-        Bukkit.getLogger().info("Adding Temp Permission Info to user " + player.getName());
-        PermissionAttachment permissionAttachment = player.addAttachment(Bukkit.getPluginManager().getPlugin("MN2BukkitPermissions"));
-        PermissionInfo permissionInfo = new PermissionInfo(permissionAttachment);
-        user.getUserInfo().put(permissionInfo.getClass(), permissionInfo);
     }
 }
