@@ -1,9 +1,6 @@
 package com.rmb938.bukkit.permissions.database;
 
-import com.mongodb.BasicDBList;
-import com.mongodb.BasicDBObject;
-import com.mongodb.DBCursor;
-import com.mongodb.DBObject;
+import com.mongodb.*;
 import com.rmb938.bukkit.base.database.UserInfoLoader;
 import com.rmb938.bukkit.base.entity.User;
 import com.rmb938.bukkit.permissions.MN2BukkitPermissions;
@@ -17,6 +14,7 @@ import org.bukkit.permissions.PermissionAttachment;
 
 import java.util.Collections;
 import java.util.Comparator;
+import java.util.Map;
 
 public class PermissionInfoLoader extends UserInfoLoader<PermissionInfo> {
 
@@ -37,14 +35,19 @@ public class PermissionInfoLoader extends UserInfoLoader<PermissionInfo> {
 
     public void loadGroups() {
         Group.getGroups().clear();
-        DBCursor cursor = DatabaseAPI.getMongoDatabase().findMany("mn2_permissions_groups");
+        Map.Entry<DBCursor, MongoClient> dbCursorMongoClientEntry = DatabaseAPI.getMongoDatabase().findMany("mn2_permissions_groups");
+        MongoClient mongoClient = dbCursorMongoClientEntry.getValue();
+        DBCursor dbCursor = dbCursorMongoClientEntry.getKey();
 
-        while (cursor.hasNext()) {
-            DBObject dbObject = cursor.next();
+        while (dbCursor.hasNext()) {
+            DBObject dbObject = dbCursor.next();
             String groupName = (String) dbObject.get("groupName");
             loadGroup(groupName);
         }
-        cursor.close();
+        dbCursor.close();
+
+        DatabaseAPI.getMongoDatabase().returnClient(mongoClient);
+
         if (Group.getGroups().containsKey(plugin.getMainConfig().defaultGroup) == false) {
             createGroup(plugin.getMainConfig().defaultGroup, 0);
         }
@@ -202,18 +205,22 @@ public class PermissionInfoLoader extends UserInfoLoader<PermissionInfo> {
             }
         }
 
-        Collections.sort(permissionInfo.getGroups(), new Comparator<Group>() {
-            @Override
-            public int compare(Group o1, Group o2) {
-                if (o1.getWeight() > o2.getWeight()) {
-                    return 1;
+        if (permissionInfo.getGroups().size() == 0) {
+            permissionInfo.getGroups().add(Group.getGroups().get(plugin.getMainConfig().defaultGroup));
+        } else {
+            Collections.sort(permissionInfo.getGroups(), new Comparator<Group>() {
+                @Override
+                public int compare(Group o1, Group o2) {
+                    if (o1.getWeight() > o2.getWeight()) {
+                        return 1;
+                    }
+                    if (o1.getWeight() < o2.getWeight()) {
+                        return -1;
+                    }
+                    return 0;
                 }
-                if (o1.getWeight() < o2.getWeight()) {
-                    return -1;
-                }
-                return 0;
-            }
-        });
+            });
+        }
 
         addInheritance(permissionInfo.getGroups().get(0), permissionAttachment);
 
