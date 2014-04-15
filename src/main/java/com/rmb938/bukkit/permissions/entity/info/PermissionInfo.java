@@ -9,14 +9,11 @@ import java.util.ArrayList;
 
 public class PermissionInfo extends UserInfo {
 
-    private final PermissionAttachment permissionAttachment;
-
     private ArrayList<Group> groups = new ArrayList<>();
     private ArrayList<Permission> permissions = new ArrayList<>();
 
-    public PermissionInfo(PermissionAttachment permissionAttachment) {
+    public PermissionInfo() {
         super(PermissionInfo.class.getName());
-        this.permissionAttachment = permissionAttachment;
     }
 
     public ArrayList<Group> getGroups() {
@@ -25,9 +22,5 @@ public class PermissionInfo extends UserInfo {
 
     public ArrayList<Permission> getPermissions() {
         return permissions;
-    }
-
-    public PermissionAttachment getPermissionAttachment() {
-        return permissionAttachment;
     }
 }

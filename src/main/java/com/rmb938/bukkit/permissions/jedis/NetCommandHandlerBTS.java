@@ -42,10 +42,10 @@ public class NetCommandHandlerBTS  extends NetCommandHandler {
             HashMap<String, Object> objectHashMap = objectToHashMap(jsonObject.getJSONObject("data"));
             switch (command) {
                 case "reloadGroups":
-                    plugin.getPermissionInfoLoader().loadGroups();
                     plugin.getServer().getScheduler().runTask(plugin, new Runnable() {
                         @Override
                         public void run() {
+                            plugin.getPermissionInfoLoader().loadGroups();
                             for (Player player : plugin.getServer().getOnlinePlayers()) {
                                 User user = basePlugin.getUserLoader().getUser(player);
                                 if (user.getUserInfo().containsKey(PermissionInfo.class)) {
@@ -56,12 +56,17 @@ public class NetCommandHandlerBTS  extends NetCommandHandler {
                     });
                     break;
                 case "reloadUser":
-                    String playerUUID = (String) objectHashMap.get("playerUUID");
-                    Player player = Bukkit.getPlayer(UUID.fromString(playerUUID));
-                    if (player == null) {
-                        return;
-                    }
-                    plugin.getPermissionInfoLoader().loadUserInfo(basePlugin.getUserLoader().getUser(player), player);
+                    final String playerUUID = (String) objectHashMap.get("playerUUID");
+                    plugin.getServer().getScheduler().runTask(plugin, new Runnable() {
+                        @Override
+                        public void run() {
+                            Player player = Bukkit.getPlayer(UUID.fromString(playerUUID));
+                            if (player == null) {
+                                return;
+                            }
+                            plugin.getPermissionInfoLoader().loadUserInfo(basePlugin.getUserLoader().getUser(player), player);
+                        }
+                    });
                     break;
                 default:
                     break;

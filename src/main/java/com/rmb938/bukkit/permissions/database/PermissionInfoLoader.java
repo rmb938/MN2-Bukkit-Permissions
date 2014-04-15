@@ -8,11 +8,13 @@ import com.rmb938.bukkit.permissions.entity.Group;
 import com.rmb938.bukkit.permissions.entity.Permission;
 import com.rmb938.bukkit.permissions.entity.info.PermissionInfo;
 import com.rmb938.database.DatabaseAPI;
+import org.bukkit.Bukkit;
 import org.bukkit.entity.Player;
-import org.bukkit.permissions.PermissionAttachment;
+import org.bukkit.permissions.PermissionDefault;
 
 import java.util.Collections;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.Map;
 
 public class PermissionInfoLoader extends UserInfoLoader<PermissionInfo> {
@@ -55,7 +57,7 @@ public class PermissionInfoLoader extends UserInfoLoader<PermissionInfo> {
     public void loadGroup(String groupName) {
         DBObject dbObject = DatabaseAPI.getMongoDatabase().findOne("mn2_permissions_groups", new BasicDBObject("groupName", groupName));
         if (dbObject == null) {
-            plugin.getLogger().warning("Unknown Group "+groupName);
+            plugin.getLogger().warning("Unknown Group " + groupName);
             return;
         }
         int weight = (Integer) dbObject.get("weight");
@@ -64,8 +66,8 @@ public class PermissionInfoLoader extends UserInfoLoader<PermissionInfo> {
         group.setWeight(weight);
 
         BasicDBList inheritance = (BasicDBList) dbObject.get("inheritance");
-        while (inheritance.iterator().hasNext()) {
-            String groupName1 = (String) inheritance.iterator().next();
+        for (Object anInheritance : inheritance) {
+            String groupName1 = (String) anInheritance;
             if (Group.getGroups().containsKey(groupName1)) {
                 group.getInheritance().add(Group.getGroups().get(groupName1));
             } else {
@@ -73,7 +75,7 @@ public class PermissionInfoLoader extends UserInfoLoader<PermissionInfo> {
                 if (Group.getGroups().containsKey(groupName1)) {
                     group.getInheritance().add(Group.getGroups().get(groupName1));
                 } else {
-                    plugin.getLogger().warning("Unknown group adding to group " + groupName+" removing");
+                    plugin.getLogger().warning("Unknown group adding to group " + groupName + " removing");
                     DatabaseAPI.getMongoDatabase().updateDocument("mn2_permission_groups", new BasicDBObject("groupName", group.getGroupName()),
                             new BasicDBObject("$pull", new BasicDBObject("inheritance", groupName)));
                 }
@@ -81,8 +83,8 @@ public class PermissionInfoLoader extends UserInfoLoader<PermissionInfo> {
         }
 
         BasicDBList permissions = (BasicDBList) dbObject.get("permissions");
-        while (permissions.iterator().hasNext()) {
-            BasicDBObject dbObject1 = (BasicDBObject) permissions.iterator().next();
+        for (Object permission1 : permissions) {
+            BasicDBObject dbObject1 = (BasicDBObject) permission1;
             String permissionString = (String) dbObject1.get("permission");
             String serverType = (String) dbObject1.get("serverType");
             Permission permission = new Permission();
@@ -104,9 +106,9 @@ public class PermissionInfoLoader extends UserInfoLoader<PermissionInfo> {
         loadGroup(groupName);
     }
 
-    private void addInheritance(Group group, PermissionAttachment permissionAttachment) {
+    private void addInheritance(Group group, org.bukkit.permissions.Permission perm) {
         for (Group group1 : group.getInheritance()) {
-            addInheritance(group1, permissionAttachment);
+            addInheritance(group1, perm);
         }
         for (Permission permission : group.getPermissions()) {
             if (permission.getServerType().equals("bungee")) {
@@ -118,9 +120,11 @@ public class PermissionInfoLoader extends UserInfoLoader<PermissionInfo> {
                 }
             }
             if (permission.getPermission().startsWith("-")) {
-                permissionAttachment.setPermission(permission.getPermission().substring(1, permission.getPermission().length()), false);
+                perm.getChildren().put(permission.getPermission().substring(1, permission.getPermission().length()), false);
+                //permissionAttachment.setPermission(permission.getPermission().substring(1, permission.getPermission().length()), false);
             } else {
-                permissionAttachment.setPermission(permission.getPermission(), true);
+                perm.getChildren().put(permission.getPermission(), true);
+                //permissionAttachment.setPermission(permission.getPermission(), true);
             }
         }
     }
@@ -132,24 +136,36 @@ public class PermissionInfoLoader extends UserInfoLoader<PermissionInfo> {
         }
         DBObject userObject = DatabaseAPI.getMongoDatabase().findOne("mn2_users", new BasicDBObject("userUUID", user.getUserUUID()));
         if (userObject == null) {
-            plugin.getLogger().warning("Unknown user permission info "+player.getName());
+            plugin.getLogger().warning("Unknown user permission info " + player.getName());
             return null;
         }
-        PermissionAttachment permissionAttachment = player.addAttachment(plugin);
-        PermissionInfo permissionInfo = new PermissionInfo(permissionAttachment);
-
+        plugin.getLogger().info(userObject.toString());
+        PermissionInfo permissionInfo;
+        org.bukkit.permissions.Permission perm;
+        if (user.getUserInfo().containsKey(PermissionInfo.class)) {
+            permissionInfo = (PermissionInfo) user.getUserInfo().get(PermissionInfo.class);
+            permissionInfo.getGroups().clear();
+            permissionInfo.getPermissions().clear();
+            perm = Bukkit.getPluginManager().getPermission("mn2.permissions."+user.getUserUUID());
+            perm.getChildren().clear();
+            perm.recalculatePermissibles();
+        } else {
+            perm = new org.bukkit.permissions.Permission("mn2.permissions."+user.getUserUUID(), PermissionDefault.FALSE, new HashMap<String, Boolean>());
+            Bukkit.getPluginManager().addPermission(perm);
+            player.addAttachment(plugin, perm.getName(), true);
+            permissionInfo = new PermissionInfo();
+        }
         if (userObject.containsField("groups") == false) {
             return null;
         }
 
         BasicDBList groupsList = (BasicDBList) userObject.get("groups");
-
-        while (groupsList.iterator().hasNext()) {
-            String groupName = (String) groupsList.iterator().next();
+        for (Object aGroupsList : groupsList) {
+            String groupName = (String) aGroupsList;
             if (Group.getGroups().containsKey(groupName)) {
                 permissionInfo.getGroups().add(Group.getGroups().get(groupName));
             } else {
-                plugin.getLogger().warning("Unknown group adding to user "+groupName+" removing.");
+                plugin.getLogger().warning("Unknown group adding to user " + groupName + " removing.");
                 DatabaseAPI.getMongoDatabase().updateDocument("mn2_users", new BasicDBObject("userUUID", user.getUserUUID()),
                         new BasicDBObject("$pull", new BasicDBObject("groups", groupName)));
             }
@@ -157,6 +173,8 @@ public class PermissionInfoLoader extends UserInfoLoader<PermissionInfo> {
 
         if (permissionInfo.getGroups().size() == 0) {
             permissionInfo.getGroups().add(Group.getGroups().get(plugin.getMainConfig().defaultGroup));
+            DatabaseAPI.getMongoDatabase().updateDocument("mn2_users", new BasicDBObject("userUUID", user.getUserUUID()),
+                    new BasicDBObject("$push", new BasicDBObject("groups",plugin.getMainConfig().defaultGroup)));
         } else {
             Collections.sort(permissionInfo.getGroups(), new Comparator<Group>() {
                 @Override
@@ -172,11 +190,11 @@ public class PermissionInfoLoader extends UserInfoLoader<PermissionInfo> {
             });
         }
 
-        addInheritance(permissionInfo.getGroups().get(0), permissionAttachment);
+        addInheritance(permissionInfo.getGroups().get(0), perm);
 
         BasicDBList permissionsList = (BasicDBList) userObject.get("permissions");
-        while (permissionsList.iterator().hasNext()) {
-            DBObject permissionObject = (DBObject) permissionsList.iterator().next();
+        for (Object aPermissionsList : permissionsList) {
+            DBObject permissionObject = (DBObject) aPermissionsList;
             String permissionString = (String) permissionObject.get("permission");
             String serverType = (String) permissionObject.get("serverType");
             Permission permission = new Permission();
@@ -186,21 +204,29 @@ public class PermissionInfoLoader extends UserInfoLoader<PermissionInfo> {
         }
 
         for (Permission permission : permissionInfo.getPermissions()) {
-            if (permission.getServerType().equalsIgnoreCase("bungee")) {
-                continue;
-            }
-            if (permission.getServerType().equalsIgnoreCase("global") == false) {
-                if (permission.getServerType().equalsIgnoreCase(plugin.getServer().getServerName().split("\\.")[0]) == false) {
-                    continue;
+            if (permission.getServerType().equalsIgnoreCase("global") == true) {
+                if (permission.getPermission().startsWith("-")) {
+                    perm.getChildren().put(permission.getPermission().substring(1, permission.getPermission().length()), false);
+                    //permissionAttachment.setPermission(permission.getPermission().substring(1, permission.getPermission().length()), false);
+                } else {
+                    perm.getChildren().put(permission.getPermission(), true);
+                    //permissionAttachment.setPermission(permission.getPermission(), true);
                 }
-            }
-            if (permission.getPermission().startsWith("-")) {
-                permissionAttachment.setPermission(permission.getPermission().substring(1, permission.getPermission().length()), false);
-            } else {
-                permissionAttachment.setPermission(permission.getPermission(), true);
             }
         }
 
+        for (Permission permission : permissionInfo.getPermissions()) {
+            if (permission.getServerType().equalsIgnoreCase(plugin.getServer().getServerName().split("\\.")[0]) == true) {
+                if (permission.getPermission().startsWith("-")) {
+                    perm.getChildren().put(permission.getPermission().substring(1, permission.getPermission().length()), false);
+                    //permissionAttachment.setPermission(permission.getPermission().substring(1, permission.getPermission().length()), false);
+                } else {
+                    perm.getChildren().put(permission.getPermission(), true);
+                    //permissionAttachment.setPermission(permission.getPermission(), true);
+                }
+            }
+        }
+        perm.recalculatePermissibles();
         user.getUserInfo().put(PermissionInfo.class, permissionInfo);
         return permissionInfo;
     }
@@ -210,7 +236,6 @@ public class PermissionInfoLoader extends UserInfoLoader<PermissionInfo> {
         if (player == null) {
             return;
         }
-
         DatabaseAPI.getMongoDatabase().updateDocument("mn2_users", new BasicDBObject("userUUID", user.getUserUUID()),
                 new BasicDBObject("$set", new BasicDBObject("groups", new BasicDBList())));
         DatabaseAPI.getMongoDatabase().updateDocument("mn2_users", new BasicDBObject("userUUID", user.getUserUUID()),
@@ -218,7 +243,9 @@ public class PermissionInfoLoader extends UserInfoLoader<PermissionInfo> {
     }
 
     @Override
-    public void saveUserInfo(User user, Player player) {
-
+    public void saveUserInfo(User user, Player player, boolean remove) {
+        if (remove == true) {
+            Bukkit.getPluginManager().removePermission("mn2.permissions." + user.getUserUUID());
+        }
     }
 }
