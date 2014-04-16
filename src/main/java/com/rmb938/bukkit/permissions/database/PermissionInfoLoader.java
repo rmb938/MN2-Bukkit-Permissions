@@ -12,10 +12,7 @@ import org.bukkit.Bukkit;
 import org.bukkit.entity.Player;
 import org.bukkit.permissions.PermissionDefault;
 
-import java.util.Collections;
-import java.util.Comparator;
-import java.util.HashMap;
-import java.util.Map;
+import java.util.*;
 
 public class PermissionInfoLoader extends UserInfoLoader<PermissionInfo> {
 
@@ -56,6 +53,10 @@ public class PermissionInfoLoader extends UserInfoLoader<PermissionInfo> {
             plugin.getLogger().warning("Unknown Group " + groupName);
             return;
         }
+        if (Group.getGroups().containsKey(groupName)) {
+            //don't load if loaded from inheritance
+            return;
+        }
         int weight = (Integer) dbObject.get("weight");
         Group group = new Group();
         group.setGroupName(groupName);
@@ -67,6 +68,12 @@ public class PermissionInfoLoader extends UserInfoLoader<PermissionInfo> {
             if (Group.getGroups().containsKey(groupName1)) {
                 group.getInheritance().add(Group.getGroups().get(groupName1));
             } else {
+                if (getParents(groupName1).contains(group.getGroupName())) {
+                    plugin.getLogger().warning("Preventing group parent loop "+group.getGroupName()+" and "+groupName1);
+                    DatabaseAPI.getMongoDatabase().updateDocument("mn2_permission_groups", new BasicDBObject("groupName", group.getGroupName()),
+                            new BasicDBObject("$pull", new BasicDBObject("inheritance", groupName)));
+                    continue;
+                }
                 loadGroup(groupName1);
                 if (Group.getGroups().containsKey(groupName1)) {
                     group.getInheritance().add(Group.getGroups().get(groupName1));
@@ -104,6 +111,20 @@ public class PermissionInfoLoader extends UserInfoLoader<PermissionInfo> {
             group.getPermissions().add(permission);
         }
         Group.getGroups().put(groupName, group);
+    }
+
+    public ArrayList<String> getParents(String groupName) {
+        ArrayList<String> parents = new ArrayList<>();
+        DBObject dbObject = DatabaseAPI.getMongoDatabase().findOne("mn2_permissions_groups", new BasicDBObject("groupName", groupName));
+        if (dbObject == null) {
+            return parents;
+        }
+        BasicDBList inheritance = (BasicDBList) dbObject.get("inheritance");
+        for (Object anInheritance : inheritance) {
+            String groupName1 = (String) anInheritance;
+            parents.add(groupName1);
+        }
+        return parents;
     }
 
     public void createGroup(String groupName, int weight) {
