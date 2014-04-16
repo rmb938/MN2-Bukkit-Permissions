@@ -48,10 +48,6 @@ public class PermissionInfoLoader extends UserInfoLoader<PermissionInfo> {
         dbCursor.close();
 
         DatabaseAPI.getMongoDatabase().returnClient(mongoClient);
-
-        if (Group.getGroups().containsKey(plugin.getMainConfig().defaultGroup) == false) {
-            createGroup(plugin.getMainConfig().defaultGroup, 0);
-        }
     }
 
     public void loadGroup(String groupName) {
@@ -80,6 +76,21 @@ public class PermissionInfoLoader extends UserInfoLoader<PermissionInfo> {
                             new BasicDBObject("$pull", new BasicDBObject("inheritance", groupName)));
                 }
             }
+        }
+
+        if (group.getInheritance().isEmpty() == false) {
+            Collections.sort(group.getInheritance(), new Comparator<Group>() {
+                @Override
+                public int compare(Group o1, Group o2) {
+                    if (o1.getWeight() > o2.getWeight()) {
+                        return -1;
+                    }
+                    if (o1.getWeight() < o2.getWeight()) {
+                        return 1;
+                    }
+                    return 0;
+                }
+            });
         }
 
         BasicDBList permissions = (BasicDBList) dbObject.get("permissions");
@@ -171,26 +182,21 @@ public class PermissionInfoLoader extends UserInfoLoader<PermissionInfo> {
             }
         }
 
-        if (permissionInfo.getGroups().size() == 0) {
-            permissionInfo.getGroups().add(Group.getGroups().get(plugin.getMainConfig().defaultGroup));
-            DatabaseAPI.getMongoDatabase().updateDocument("mn2_users", new BasicDBObject("userUUID", user.getUserUUID()),
-                    new BasicDBObject("$push", new BasicDBObject("groups",plugin.getMainConfig().defaultGroup)));
-        } else {
+        if (permissionInfo.getGroups().isEmpty() == false) {
             Collections.sort(permissionInfo.getGroups(), new Comparator<Group>() {
                 @Override
                 public int compare(Group o1, Group o2) {
                     if (o1.getWeight() > o2.getWeight()) {
-                        return 1;
+                        return -1;
                     }
                     if (o1.getWeight() < o2.getWeight()) {
-                        return -1;
+                        return 1;
                     }
                     return 0;
                 }
             });
+            addInheritance(permissionInfo.getGroups().get(0), perm);
         }
-
-        addInheritance(permissionInfo.getGroups().get(0), perm);
 
         BasicDBList permissionsList = (BasicDBList) userObject.get("permissions");
         for (Object aPermissionsList : permissionsList) {
