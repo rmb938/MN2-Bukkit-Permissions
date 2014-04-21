@@ -71,7 +71,7 @@ public class PermissionInfoLoader extends UserInfoLoader<PermissionInfo> {
                 if (getParents(groupName1).contains(group.getGroupName())) {
                     plugin.getLogger().warning("Preventing group parent loop "+group.getGroupName()+" and "+groupName1);
                     DatabaseAPI.getMongoDatabase().updateDocument("mn2_permission_groups", new BasicDBObject("groupName", group.getGroupName()),
-                            new BasicDBObject("$pull", new BasicDBObject("inheritance", groupName)));
+                            new BasicDBObject("$pull", new BasicDBObject("inheritance", groupName1)));
                     continue;
                 }
                 loadGroup(groupName1);
@@ -171,7 +171,9 @@ public class PermissionInfoLoader extends UserInfoLoader<PermissionInfo> {
             plugin.getLogger().warning("Unknown user permission info " + player.getName());
             return null;
         }
-        plugin.getLogger().info(userObject.toString());
+        if (userObject.containsField("groups") == false) {
+            return null;
+        }
         PermissionInfo permissionInfo;
         org.bukkit.permissions.Permission perm;
         if (user.getUserInfo().containsKey(PermissionInfo.class)) {
@@ -186,9 +188,6 @@ public class PermissionInfoLoader extends UserInfoLoader<PermissionInfo> {
             Bukkit.getPluginManager().addPermission(perm);
             player.addAttachment(plugin, perm.getName(), true);
             permissionInfo = new PermissionInfo();
-        }
-        if (userObject.containsField("groups") == false) {
-            return null;
         }
 
         BasicDBList groupsList = (BasicDBList) userObject.get("groups");
@@ -216,7 +215,10 @@ public class PermissionInfoLoader extends UserInfoLoader<PermissionInfo> {
                     return 0;
                 }
             });
-            addInheritance(permissionInfo.getGroups().get(0), perm);
+        }
+
+        for (Group group : permissionInfo.getGroups()) {
+            addInheritance(group, perm);
         }
 
         BasicDBList permissionsList = (BasicDBList) userObject.get("permissions");
@@ -260,13 +262,14 @@ public class PermissionInfoLoader extends UserInfoLoader<PermissionInfo> {
 
     @Override
     public void createUserInfo(User user, Player player) {
-        if (player == null) {
+        //Should be created by bungee
+        /*if (player == null) {
             return;
         }
         DatabaseAPI.getMongoDatabase().updateDocument("mn2_users", new BasicDBObject("userUUID", user.getUserUUID()),
                 new BasicDBObject("$set", new BasicDBObject("groups", new BasicDBList())));
         DatabaseAPI.getMongoDatabase().updateDocument("mn2_users", new BasicDBObject("userUUID", user.getUserUUID()),
-                new BasicDBObject("$set", new BasicDBObject("permissions", new BasicDBList())));
+                new BasicDBObject("$set", new BasicDBObject("permissions", new BasicDBList())));*/
     }
 
     @Override
